@@ -1,0 +1,206 @@
+name: Release (ESP32) — Safe & Auto-Fix
+
+on:
+  push:
+    tags: [ 'v*.*.*' ]
+  workflow_dispatch:
+
+# Kamu boleh set PIO_ENV, tapi kalau nanti tidak ditemukan,
+# workflow ini otomatis memilih environment pertama yang tersedia.
+env:
+  PIO_ENV: full
+  ALLOW_FALLBACK_SRC: "1"   # kalau src kosong, buat main.cpp placeholder agar build tetap jalan
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install unzip + PlatformIO
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install platformio
+
+      # === INFO AWAL (biar mudah debug kalau ada apa-apa) ===
+      - name: Show repo tree (top)
+        run: |
+          echo "== LS =="
+          ls -la
+          echo "== Find platformio.ini (before unzip) =="
+          git ls-files | grep -E 'platformio\.ini$' || true
+          echo "== Find any zip at root =="
+          ls -1 *.zip 2>/dev/null || true
+
+      # === UNZIP AMAN (hanya jika platformio.ini belum ada) ===
+      - name: Unzip source if needed (safe)
+        shell: bash
+        run: |
+          set -e
+          if git ls-files | grep -q -E 'platformio\.ini$'; then
+            echo "platformio.ini sudah ada di repo → skip unzip"
+            exit 0
+          fi
+          ZIP="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
+          if [ -z "$ZIP" ]; then
+            echo "ZIP tidak ada → skip unzip"
+            exit 0
+          fi
+          echo "Unzip: $ZIP"
+          mkdir -p extracted
+          unzip -q "$ZIP" -d extracted
+
+          ROOT="extracted"
+          TOPDIRS=$(find extracted -mindepth 1 -maxdepth 1 -type d | wc -l)
+          TOPFILES=$(find extracted -mindepth 1 -maxdepth 1 -type f | wc -l)
+          if [ "$TOPDIRS" -eq 1 ] && [ "$TOPFILES" -eq 0 ]; then
+            ROOT="$(find extracted -mindepth 1 -maxdepth 1 -type d)"
+          fi
+
+          shopt -s dotglob nullglob
+          for p in "$ROOT"/*; do
+            base="$(basename "$p")"
+            # Jangan menimpa workflow repo
+            if [ "$base" = ".git" ]; then echo "skip .git"; continue; fi
+            if [ "$base" = ".github" ]; then echo "skip .github from ZIP"; continue; fi
+            if [ ! -e "$base" ]; then
+              mv "$p" .
+            else
+              # merge tanpa overwrite
+              cp -r -n "$p" "./$base"
+            fi
+          done
+          rm -rf extracted
+
+      # === LOKASI PROYEK PLATFORMIO ===
+      - name: Locate PlatformIO project dir
+        id: locate
+        shell: bash
+        run: |
+          set -e
+          FILE="$(git ls-files | grep -m1 -E '^.*platformio\.ini$' || true)"
+          if [ -z "$FILE" ]; then
+            echo "ERROR: platformio.ini tidak ditemukan. Pastikan repo ini memang proyek PlatformIO."
+            exit 1
+          fi
+          DIR="$(dirname "$FILE")"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "Found platformio.ini at: $DIR"
+
+      - name: Show project tree
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: |
+          echo "== Tree (2 levels) =="
+          find . -maxdepth 2 -print
+          echo "== platformio.ini =="
+          sed -n '1,200p' platformio.ini
+
+      # === RESOLVE ENVIRONMENT ===
+      - name: Resolve environment (use PIO_ENV if exists; else first env)
+        id: resolve
+        working-directory: ${{ steps.locate.outputs.dir }}
+        shell: bash
+        run: |
+          set -e
+          echo "Requested PIO_ENV: '${PIO_ENV}'"
+          ENVS="$(pio run -t envlist 2>/dev/null | sed -n 's/^\$$env:\$$.*\$$\$$$/\\1/p')"
+          echo "Available envs:"
+          echo "$ENVS"
+          CHOSEN="$PIO_ENV"
+          if ! echo "$ENVS" | grep -qx "$PIO_ENV"; then
+            # pilih env pertama kalau PIO_ENV tidak ada
+            CHOSEN="$(echo "$ENVS" | head -n1)"
+            if [ -z "$CHOSEN" ]; then
+              echo "ERROR: Tidak ada [env:...] di platformio.ini"
+              exit 1
+            fi
+            echo "WARNING: PIO_ENV tidak ditemukan. Pakai env pertama: $CHOSEN"
+          fi
+          echo "env=$CHOSEN" >> "$GITHUB_OUTPUT"
+
+      # === TENTUKAN SRC_DIR & AUTO-FIX JIKA KOSONG ===
+      - name: Ensure source exists (auto-fix if empty)
+        working-directory: ${{ steps.locate.outputs.dir }}
+        shell: bash
+        run: |
+          set -e
+          # Cari src_dir di platformio.ini (kalau tidak ada, default "src")
+          SRC_DIR="$(grep -E '^[[:space:]]*src_dir[[:space:]]*=' platformio.ini | tail -n1 | sed 's/.*=\\s*//')"
+          [ -z "$SRC_DIR" ] && SRC_DIR="src"
+          echo "src_dir = $SRC_DIR"
+          mkdir -p "$SRC_DIR"
+
+          # Cek apakah ada minimal 1 .cpp/.ino di src_dir
+          if ls "$SRC_DIR"/*.{cpp,ino} >/dev/null 2>&1; then
+            echo "Source OK: ditemukan file di $SRC_DIR"
+          else
+            echo "Source kosong di $SRC_DIR"
+            if [ "${ALLOW_FALLBACK_SRC}" = "1" ]; then
+              echo "Buat placeholder main.cpp agar build jalan..."
+              cat > "$SRC_DIR/main.cpp" <<'__CPP__'
+#include <Arduino.h>
+void setup(){ Serial.begin(115200); delay(50); Serial.println("Build OK (placeholder)"); }
+void loop(){ delay(1000); }
+__CPP__
+            else
+              echo "ERROR: Tidak ada file .cpp/.ino di $SRC_DIR. Matikan auto-fix atau tambahkan source."
+              exit 1
+            fi
+          fi
+          echo "== List $SRC_DIR =="
+          ls -la "$SRC_DIR" || true
+
+      # === BUILD (pakai env hasil resolve) ===
+      - name: Build
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: |
+          echo "Building env: ${{ steps.resolve.outputs.env }}"
+          pio run -e "${{ steps.resolve.outputs.env }}" -v
+
+      # === KEMAS RILIS TANPA HEREDOC ===
+      - name: Prepare release assets
+        id: prep
+        working-directory: ${{ steps.locate.outputs.dir }}
+        shell: bash
+        run: |
+          set -e
+          OUT=".pio/build/${{ steps.resolve.outputs.env }}"
+          mkdir -p dist
+          cp "$OUT"/firmware.bin    dist/firmware.bin
+          cp "$OUT"/bootloader*.bin dist/bootloader.bin 2>/dev/null || true
+          cp "$OUT"/partitions*.bin dist/partitions.bin 2>/dev/null || true
+          printf "bootloader.bin @ 0x1000\npartitions.bin @ 0x8000\nfirmware.bin   @ 0x10000\n" > dist/offsets.txt
+          printf "%s\n" \
+            "# Flash via Android (ESP32_flash)" \
+            "1) ESP32 ↔ OTG ↔ Android" \
+            "2) bootloader.bin → 0x1000 (jika ada)" \
+            "3) partitions.bin → 0x8000 (jika ada)" \
+            "4) firmware.bin   → 0x10000" \
+            > dist/readme_android.md
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          ZIP="firmware_${GITHUB_REF_NAME#refs/tags/}.zip"
+          (cd dist && zip -9 "../$ZIP" *)
+          echo "zipname=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Firmware ${{ github.ref_name }}
+          files: |
+            ${{ steps.locate.outputs.dir }}/${{ steps.prep.outputs.zipname }}
+            ${{ steps.locate.outputs.dir }}/dist/SHA256SUMS.txt
