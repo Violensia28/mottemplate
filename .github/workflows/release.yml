@@ -20,7 +20,6 @@ jobs:
         with:
           fetch-depth: 0
           submodules: false
-          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -32,17 +31,15 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install platformio
 
-      - name: Build (ci_build)
+      - name: Build firmware
         working-directory: ci_build
         run: |
-          set -e
           pio run -e full -v
 
-      - name: Package
+      - name: Package firmware
         id: pkg
         working-directory: ci_build
         run: |
-          set -e
           OUT=".pio/build/full"
           mkdir -p dist
           cp "$OUT/firmware.bin" dist/firmware.bin
