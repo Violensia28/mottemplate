@@ -1,91 +1,54 @@
-name: Release (ESP32) — Bootstrap Build
+name: Release ESP32 CI
 
 on:
   push:
-    tags: [ 'v*.*.*' ]
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: 'false'
-        
+          submodules: false
+          persist-credentials: false
 
-    submodules: 'false'
       - name: Setup Python
         uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
+        with:
+          python-version: '3.11'
 
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install platformio
 
-      # === BOOTSTRAP: bikin proyek PIO minimal di ci_build/ ===
-      - name: Bootstrap minimal ESP32 project (ignore repo contents)
-        run: |
-          set -e
-          rm -rf ci_build
-          mkdir -p ci_build/src
-
-          # Tulis platformio.ini (pin platform agar stabil)
-          printf "%s\n" \
-            "[platformio]" \
-            "default_envs = esp32dev" \
-            "" \
-            "[env:esp32dev]" \
-            "platform = espressif32 @ 6.12.0" \
-            "board = esp32dev" \
-            "framework = arduino" \
-            "monitor_speed = 115200" \
-            > ci_build/platformio.ini
-
-          # Tulis main.cpp placeholder agar build pasti jalan
-          printf "%s\n" \
-            "#include <Arduino.h>" \
-            "void setup(){ Serial.begin(115200); delay(50); Serial.println(\"MOTSmart bootstrap OK\"); }" \
-            "void loop(){ delay(1000); }" \
-            > ci_build/src/main.cpp
-
-      - name: Build (bootstrap)
+      - name: Build (ci_build)
         working-directory: ci_build
         run: |
           set -e
-          pio run -e esp32dev -v
+          pio run -e full -v
 
-      - name: Prepare release assets
-        id: prep
+      - name: Package
+        id: pkg
         working-directory: ci_build
         run: |
           set -e
-          OUT=".pio/build/esp32dev"
+          OUT=".pio/build/full"
           mkdir -p dist
-          cp "$OUT/firmware.bin"    dist/firmware.bin
-          # Bootloader/partitions mungkin tidak tersedia—aman diabaikan
+          cp "$OUT/firmware.bin" dist/firmware.bin
           cp "$OUT"/bootloader*.bin dist/bootloader.bin 2>/dev/null || true
           cp "$OUT"/partitions*.bin dist/partitions.bin 2>/dev/null || true
-
-          # Offsets standar ESP32
           printf "bootloader.bin @ 0x1000\npartitions.bin @ 0x8000\nfirmware.bin   @ 0x10000\n" > dist/offsets.txt
-
-          # Panduan flash singkat
-          printf "%s\n" \
-            "# Flash via Android (ESP32_flash)" \
-            "1) ESP32 ↔ OTG ↔ Android" \
-            "2) bootloader.bin → 0x1000 (jika ada)" \
-            "3) partitions.bin → 0x8000 (jika ada)" \
-            "4) firmware.bin   → 0x10000" \
-            > dist/readme_android.md
-
           (cd dist && sha256sum * > SHA256SUMS.txt)
           ZIP="firmware_${GITHUB_REF_NAME#refs/tags/}.zip"
           (cd dist && zip -9 "../$ZIP" *)
@@ -95,7 +58,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Firmware ${{ github.ref_name }} (ESP32 bootstrap)
+          name: Firmware ${{ github.ref_name }}
           files: |
-            ci_build/${{ steps.prep.outputs.zipname }}
+            ci_build/${{ steps.pkg.outputs.zipname }}
             ci_build/dist/SHA256SUMS.txt
