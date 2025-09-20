@@ -35,27 +35,60 @@ jobs:
           python -m pip install platformio
 
       - name: Unzip source (if a ZIP is present)
-        shell: bash
-        run: |
-          set -e
-          ZIP="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
-          if [ -z "$ZIP" ]; then
-            echo "No ZIP found. Skipping unzip."
-            exit 0
-          fi
-          echo "Found ZIP: $ZIP"
-          mkdir -p extracted
-          unzip -q "$ZIP" -d extracted
-          ROOT="extracted"
-          TOPDIRS=$(find extracted -mindepth 1 -maxdepth 1 -type d | wc -l)
-          TOPFILES=$(find extracted -mindepth 1 -maxdepth 1 -type f | wc -l)
-          if [ "$TOPDIRS" -eq 1 ] && [ "$TOPFILES" -eq 0 ]; then
-            ROOT="$(find extracted -mindepth 1 -maxdepth 1 -type d)"
-          fi
-          shopt -s dotglob
-          mv "$ROOT"/* .
-          rm -rf extracted
+  shell: bash
+  run: |
+    set -e
+    # Cari satu file .zip di root repo (kalau tidak ada, lewati)
+    ZIP="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
+    if [ -z "$ZIP" ]; then
+      echo "No ZIP found. Skipping unzip."
+      exit 0
+    fi
 
+    echo "Found ZIP: $ZIP"
+    mkdir -p extracted
+    unzip -q "$ZIP" -d extracted
+
+    # Jika ZIP berisi satu folder di dalamnya, jadikan itu ROOT
+    ROOT="extracted"
+    TOPDIRS=$(find extracted -mindepth 1 -maxdepth 1 -type d | wc -l)
+    TOPFILES=$(find extracted -mindepth 1 -maxdepth 1 -type f | wc -l)
+    if [ "$TOPDIRS" -eq 1 ] && [ "$TOPFILES" -eq 0 ]; then
+      ROOT="$(find extracted -mindepth 1 -maxdepth 1 -type d)"
+    fi
+
+    # Pindahkan/Salin isi ROOT ke workspace, tetapi:
+    # - JANGAN timpa file yang sudah ada (cp -r -n),
+    # - LEWATI ".git", dan
+    # - LEWATI ".github" jika .github sudah ada di repo.
+    shopt -s dotglob nullglob
+    for p in "$ROOT"/*; do
+      base="$(basename "$p")"
+
+      # Skip entri .git
+      if [ "$base" = ".git" ]; then
+        echo "Skip .git"
+        continue
+      fi
+
+      # Jika .github dari ZIP dan .github di repo SUDAH ada, skip merge
+      if [ "$base" = ".github" ] && [ -d ".github" ]; then
+        echo "Skip merging .github from ZIP (repo already has .github)."
+        continue
+      fi
+
+      # Jika target BELUM ada, boleh dipindahkan langsung (lebih cepat)
+      if [ ! -e "$base" ]; then
+        mv "$p" .
+      else
+        # Jika target sudah ada, salin TANPA menimpa file yang sudah ada
+        # (untuk direktori akan 'merge' yang belum ada)
+        cp -r -n "$p" "./$base"
+      fi
+    done
+
+    # Bersihkan folder ekstraksi
+    rm -rf extracted
       - name: Locate PlatformIO project dir
         id: pio
         shell: bash
