@@ -31,14 +31,36 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install platformio
 
-      - name: Build firmware
-        working-directory: ci_build
+      # Cari platformio.ini di mana saja (root atau subfolder)
+      - name: Locate PlatformIO project
+        id: pio
+        shell: bash
         run: |
+          set -e
+          FILE="$(git ls-files | grep -m1 -E '^platformio\.ini$|.*/platformio\.ini$' || true)"
+          if [ -z "$FILE" ]; then
+            echo "ERROR: platformio.ini not found in repository." >&2
+            exit 1
+          fi
+          DIR="$(dirname "$FILE")"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "Found platformio.ini at: $DIR"
+
+      - name: Show project tree
+        working-directory: ${{ steps.pio.outputs.dir }}
+        run: |
+          echo "== TREE (2 levels) =" && find . -maxdepth 2 -print
+          echo "== platformio.ini ==" && sed -n '1,200p' platformio.ini
+
+      - name: Build firmware
+        working-directory: ${{ steps.pio.outputs.dir }}
+        run: |
+          pio run -t envlist || true
           pio run -e full -v
 
       - name: Package firmware
         id: pkg
-        working-directory: ci_build
+        working-directory: ${{ steps.pio.outputs.dir }}
         run: |
           OUT=".pio/build/full"
           mkdir -p dist
@@ -57,5 +79,5 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Firmware ${{ github.ref_name }}
           files: |
-            ci_build/${{ steps.pkg.outputs.zipname }}
-            ci_build/dist/SHA256SUMS.txt
+            ${{ steps.pio.outputs.dir }}/${{ steps.pkg.outputs.zipname }}
+            ${{ steps.pio.outputs.dir }}/dist/SHA256SUMS.txt
