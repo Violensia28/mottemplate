@@ -1,28 +1,23 @@
-name: Release (ESP32) — Auto-Init, Auto-Src, Auto-Env
+name: Release (ESP32) — Bootstrap Build
 
 on:
   push:
     tags: [ 'v*.*.*' ]
   workflow_dispatch:
 
-# Biarkan PIO_ENV kosong agar auto-pick env pertama (jika ada).
-env:
-  PIO_ENV: ""
-  ALLOW_FALLBACK_SRC: "1"   # kalau src kosong, buat main.cpp placeholder
-
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
-    timeout-minutes: 25
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with: { python-version: '3.11' }
 
@@ -31,117 +26,54 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install platformio
 
-      # ==== Cek & (jika perlu) buat proyek PlatformIO dari nol ====
-      - name: Ensure PlatformIO project exists
-        id: ensure
-        shell: bash
+      # === BOOTSTRAP: bikin proyek PIO minimal di ci_build/ ===
+      - name: Bootstrap minimal ESP32 project (ignore repo contents)
         run: |
           set -e
-          if git ls-files | grep -q -E '(^|/)+platformio\.ini$'; then
-            FILE="$(git ls-files | grep -m1 -E '(^|/)+platformio\.ini$')"
-            DIR="$(dirname "$FILE")"
-            echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-            echo "Found existing platformio.ini at: $DIR"
-          else
-            echo "No platformio.ini found. Creating a minimal PIO project in repo root..."
-            pio project init --project-dir . --board esp32dev --project-option "framework=arduino"
-            echo "dir=." >> "$GITHUB_OUTPUT"
-          fi
+          rm -rf ci_build
+          mkdir -p ci_build/src
 
-      # ==== Tunjukkan struktur untuk debug cepat ====
-      - name: Show project tree (top-2)
-        working-directory: ${{ steps.ensure.outputs.dir }}
-        run: |
-          echo "== TREE (2 levels) ==" && find . -maxdepth 2 -print || true
-          echo "== platformio.ini (first 200 lines, if any) ==" && sed -n '1,200p' platformio.ini || true
+          # Tulis platformio.ini (pin platform agar stabil)
+          printf "%s\n" \
+            "[platformio]" \
+            "default_envs = esp32dev" \
+            "" \
+            "[env:esp32dev]" \
+            "platform = espressif32 @ 6.12.0" \
+            "board = esp32dev" \
+            "framework = arduino" \
+            "monitor_speed = 115200" \
+            > ci_build/platformio.ini
 
-      # ==== Pastikan ada source di src/ (buat placeholder kalau kosong) ====
-      - name: Ensure src exists (auto placeholder)
-        working-directory: ${{ steps.ensure.outputs.dir }}
-        shell: bash
-        run: |
-          set -e
-          SRC_DIR="$(grep -E '^[[:space:]]*src_dir[[:space:]]*=' platformio.ini | tail -n1 | sed 's/.*=\s*//')"
-          [ -z "$SRC_DIR" ] && SRC_DIR="src"
-          mkdir -p "$SRC_DIR"
-          if ls "$SRC_DIR"/*.{cpp,ino} >/dev/null 2>&1; then
-            echo "Source OK in $SRC_DIR"
-          else
-            if [ "${ALLOW_FALLBACK_SRC}" = "1" ]; then
-              echo "No source found. Writing placeholder to $SRC_DIR/main.cpp"
-              printf "%s\n" \
-                "#include <Arduino.h>" \
-                "void setup(){ Serial.begin(115200); delay(50); Serial.println(\"Build OK (placeholder)\"); }" \
-                "void loop(){ delay(1000); }" \
-                > "$SRC_DIR/main.cpp"
-            else
-              echo "ERROR: No source files in $SRC_DIR"
-              exit 1
-            fi
-          fi
-          echo "== LIST $SRC_DIR ==" && ls -la "$SRC_DIR"
+          # Tulis main.cpp placeholder agar build pasti jalan
+          printf "%s\n" \
+            "#include <Arduino.h>" \
+            "void setup(){ Serial.begin(115200); delay(50); Serial.println(\"MOTSmart bootstrap OK\"); }" \
+            "void loop(){ delay(1000); }" \
+            > ci_build/src/main.cpp
 
-      # ==== Resolve environment ====
-      - name: Resolve environment (auto-pick if empty)
-        id: resolve
-        working-directory: ${{ steps.ensure.outputs.dir }}
-        shell: bash
+      - name: Build (bootstrap)
+        working-directory: ci_build
         run: |
           set -e
-          REQ="${PIO_ENV}"
-          ENVS="$(pio run -t envlist 2>/dev/null | sed -n 's/^$$env:$$.*$$$$$/\1/p')"
-          echo "Available envs:" && echo "$ENVS"
-          if [ -z "$ENVS" ]; then
-            echo "No [env:...] found in platformio.ini. Building default project (no env)."
-            echo "env=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          CHOSEN="$REQ"
-          if [ -z "$CHOSEN" ] || ! echo "$ENVS" | grep -qx "$CHOSEN"; then
-            CHOSEN="$(echo "$ENVS" | head -n1)"
-            echo "Using first env: $CHOSEN"
-          else
-            echo "Using requested env: $CHOSEN"
-          fi
-          echo "env=$CHOSEN" >> "$GITHUB_OUTPUT"
+          pio run -e esp32dev -v
 
-      # ==== Build ====
-      - name: Build (with or without env)
-        working-directory: ${{ steps.ensure.outputs.dir }}
-        shell: bash
-        run: |
-          set -e
-          if [ -z "${{ steps.resolve.outputs.env }}" ]; then
-            # No env section -> PIO default build
-            pio run -v
-          else
-            pio run -e "${{ steps.resolve.outputs.env }}" -v
-          fi
-
-      # ==== Kemasi rilis (tanpa heredoc) ====
       - name: Prepare release assets
         id: prep
-        working-directory: ${{ steps.ensure.outputs.dir }}
-        shell: bash
+        working-directory: ci_build
         run: |
           set -e
-          if [ -z "${{ steps.resolve.outputs.env }}" ]; then
-            OUT=".pio/build"
-            # cari subfolder build yang punya firmware.bin
-            OUT_SUB="$(find "$OUT" -type f -name firmware.bin -printf '%h\n' | head -n1 || true)"
-            if [ -z "$OUT_SUB" ]; then
-              echo "ERROR: firmware.bin not found."
-              exit 1
-            fi
-            OUT="$OUT_SUB"
-          else
-            OUT=".pio/build/${{ steps.resolve.outputs.env }}"
-          fi
+          OUT=".pio/build/esp32dev"
           mkdir -p dist
           cp "$OUT/firmware.bin"    dist/firmware.bin
+          # Bootloader/partitions mungkin tidak tersedia—aman diabaikan
           cp "$OUT"/bootloader*.bin dist/bootloader.bin 2>/dev/null || true
           cp "$OUT"/partitions*.bin dist/partitions.bin 2>/dev/null || true
+
+          # Offsets standar ESP32
           printf "bootloader.bin @ 0x1000\npartitions.bin @ 0x8000\nfirmware.bin   @ 0x10000\n" > dist/offsets.txt
+
+          # Panduan flash singkat
           printf "%s\n" \
             "# Flash via Android (ESP32_flash)" \
             "1) ESP32 ↔ OTG ↔ Android" \
@@ -149,6 +81,7 @@ jobs:
             "3) partitions.bin → 0x8000 (jika ada)" \
             "4) firmware.bin   → 0x10000" \
             > dist/readme_android.md
+
           (cd dist && sha256sum * > SHA256SUMS.txt)
           ZIP="firmware_${GITHUB_REF_NAME#refs/tags/}.zip"
           (cd dist && zip -9 "../$ZIP" *)
@@ -158,7 +91,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Firmware ${{ github.ref_name }}
+          name: Firmware ${{ github.ref_name }} (ESP32 bootstrap)
           files: |
-            ${{ steps.ensure.outputs.dir }}/${{ steps.prep.outputs.zipname }}
-            ${{ steps.ensure.outputs.dir }}/dist/SHA256SUMS.txt
+            ci_build/${{ steps.prep.outputs.zipname }}
+            ci_build/dist/SHA256SUMS.txt
