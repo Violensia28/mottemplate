@@ -182,48 +182,44 @@ jobs:
 
 
 
-      - name: Prepare release assets (no-heredoc)
+      name: Prepare release assets
+  id: prep
+  working-directory: ${{ steps.pio.outputs.dir }}
+  shell: bash
+  run: |
+    set -e
+    OUT=".pio/build/$PIO_ENV"
+    mkdir -p dist
 
-        id: prep
+    # Salin berkas penting (pakai pola; aman jika tidak ada)
+    cp "$OUT"/bootloader*.bin dist/bootloader.bin 2>/dev/null || true
+    cp "$OUT"/partitions*.bin dist/partitions.bin 2>/dev/null || true
+    cp "$OUT"/firmware.bin    dist/firmware.bin
 
-        working-directory: ${{ steps.pio.outputs.dir }}
+    # Tulis offsets.txt TANPA heredoc (anti error YAML)
+    printf "bootloader.bin @ 0x1000\npartitions.bin @ 0x8000\nfirmware.bin   @ 0x10000\n" > dist/offsets.txt
 
-        shell: bash
+    # Tulis readme_android.md TANPA heredoc (aman untuk YAML)
+    printf "%s\n" \
+      "# Flash dari Android (USB-OTG)" \
+      "1) Install **ESP32_flash** (Play Store)." \
+      "2) Hubungkan ESP32 via OTG. Masuk bootloader (tahan **BOOT**, tekan-lepas **EN/RST**, lepas **BOOT**)." \
+      "3) Flash 3 berkas dengan offset:" \
+      "   - bootloader.bin → 0x1000" \
+      "   - partitions.bin → 0x8000" \
+      "   - firmware.bin   → 0x10000" \
+      "" \
+      "Catatan:" \
+      "- Offset standar ESP32 (ESP‑IDF Partition Tables)." \
+      "- Jika partisi proyek kustom, sesuaikan \`offsets.txt\`." \
+      > dist/readme_android.md
 
-        run: |
-
-          set -e
-
-          OUT=".pio/build/$PIO_ENV"
-
-          mkdir -p dist
-
-          cp "$OUT"/bootloader*.bin dist/bootloader.bin 2>/dev/null || true
-
-          cp "$OUT"/partitions*.bin dist/partitions.bin 2>/dev/null || true
-
-          cp "$OUT"/firmware.bin    dist/firmware.bin
-
-          printf "bootloader.bin @ 0x1000
-
-partitions.bin @ 0x8000
-
-firmware.bin   @ 0x10000
-
-" > dist/offsets.txt
-
-          printf "%s
-
-"             "# Flash dari Android (USB-OTG)"             "1) Install **ESP32_flash** (Play Store)."             "2) Hubungkan ESP32 via OTG. Masuk bootloader (tahan **BOOT**, tekan-lepas **EN/RST**, lepas **BOOT**)."             "3) Flash 3 berkas dengan offset:"             "   - bootloader.bin → 0x1000"             "   - partitions.bin → 0x8000"             "   - firmware.bin   → 0x10000"             ""             "Catatan:"             "- Offset standar ESP32 (ESP‑IDF Partition Tables)."             "- Jika partisi proyek kustom, sesuaikan offsets.txt."             > dist/readme_android.md
-
-          (cd dist && sha256sum * > SHA256SUMS.txt)
-
-          ZIP="motsmart_full_esp32_${GITHUB_REF_NAME#refs/tags/}.zip"
-
-          (cd dist && zip -9 "../$ZIP" *)
-
-          echo "zipname=$ZIP" >> "$GITHUB_OUTPUT"
-
+    # Checksum & ZIP rilis
+    (cd dist && sha256sum * > SHA256SUMS.txt)
+    ZIP="motsmart_full_esp32_${GITHUB_REF_NAME#refs/tags/}.zip"
+    (cd dist && zip -9 "../$ZIP" *)
+    echo "zipname=$ZIP" >> "$GITHUB_OUTPUT"
+ 
 
 
       - name: Create GitHub Release
