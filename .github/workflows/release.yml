@@ -1,0 +1,122 @@
+name: Release (ESP32 full) + Unzip ZIP Source
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+env:
+  PIO_ENV: full   # GANTI jika nama env kamu bukan "full"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install unzip + PlatformIO
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install platformio
+
+      - name: Unzip source (if a ZIP is present)
+        shell: bash
+        run: |
+          set -e
+          ZIP="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
+          if [ -z "$ZIP" ]; then
+            echo "No ZIP found. Skipping unzip."
+            exit 0
+          fi
+          echo "Found ZIP: $ZIP"
+          mkdir -p extracted
+          unzip -q "$ZIP" -d extracted
+          ROOT="extracted"
+          TOPDIRS=$(find extracted -mindepth 1 -maxdepth 1 -type d | wc -l)
+          TOPFILES=$(find extracted -mindepth 1 -maxdepth 1 -type f | wc -l)
+          if [ "$TOPDIRS" -eq 1 ] && [ "$TOPFILES" -eq 0 ]; then
+            ROOT="$(find extracted -mindepth 1 -maxdepth 1 -type d)"
+          fi
+          shopt -s dotglob
+          mv "$ROOT"/* .
+          rm -rf extracted
+
+      - name: Locate PlatformIO project dir
+        id: pio
+        shell: bash
+        run: |
+          set -e
+          FILE="$(git ls-files | grep -m1 -E '^.*platformio\.ini$' || true)"
+          if [ -z "$FILE" ]; then
+            echo "ERROR: platformio.ini not found after unzip."
+            echo "Make sure the repo or ZIP contains a valid PlatformIO project."
+            exit 1
+          fi
+          DIR="$(dirname "$FILE")"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "Found platformio.ini at: $DIR"
+
+      - name: Build FULL
+        working-directory: ${{ steps.pio.outputs.dir }}
+        run: |
+          pio run -t envlist || true
+          pio run -e $PIO_ENV -v
+
+      - name: Prepare release assets (no-heredoc)
+        id: prep
+        working-directory: ${{ steps.pio.outputs.dir }}
+        shell: bash
+        run: |
+          set -e
+          OUT=".pio/build/$PIO_ENV"
+          mkdir -p dist
+          cp "$OUT"/bootloader*.bin dist/bootloader.bin 2>/dev/null || true
+          cp "$OUT"/partitions*.bin dist/partitions.bin 2>/dev/null || true
+          cp "$OUT"/firmware.bin    dist/firmware.bin
+
+          # offsets.txt tanpa heredoc
+          printf "bootloader.bin @ 0x1000\npartitions.bin @ 0x8000\nfirmware.bin   @ 0x10000\n" > dist/offsets.txt
+
+          # readme_android.md tanpa heredoc
+          printf "%s\n" \
+            "# Flash dari Android (USB-OTG)" \
+            "1) Install **ESP32_flash** (Play Store)." \
+            "2) Hubungkan ESP32 via OTG. Masuk bootloader (tahan **BOOT**, tekan-lepas **EN/RST**, lepas **BOOT**)." \
+            "3) Flash 3 berkas dengan offset:" \
+            "   - bootloader.bin → 0x1000" \
+            "   - partitions.bin → 0x8000" \
+            "   - firmware.bin   → 0x10000" \
+            "" \
+            "Catatan:" \
+            "- Offset standar ESP32 (ESP‑IDF Partition Tables)." \
+            "- Jika partisi proyek kustom, sesuaikan offsets.txt." \
+            > dist/readme_android.md
+
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          ZIP="motsmart_full_esp32_${GITHUB_REF_NAME#refs/tags/}.zip"
+          (cd dist && zip -9 "../$ZIP" *)
+          echo "zipname=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: mot-smart-firmware ${{ github.ref_name }} (ESP32 full)
+          files: |
+            ${{ steps.pio.outputs.dir }}/${{ steps.prep.outputs.zipname }}
+            ${{ steps.pio.outputs.dir }}/dist/SHA256SUMS.txt
