@@ -55,9 +55,6 @@ jobs:
       - name: Build firmware
         working-directory: ${{ steps.pio.outputs.dir }}
         run: |
-          pio run -t envlist || true
-          pio run -e full -v
-
       - name: Package firmware
         id: pkg
         working-directory: ${{ steps.pio.outputs.dir }}
