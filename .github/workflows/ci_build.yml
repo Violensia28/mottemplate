@@ -61,11 +61,11 @@ jobs:
         working-directory: ${{ steps.detect.outputs.dir }}
         run: pio run -e full -t clean
 
-      - name: Build (env full) with SAFE_MODE=0 via build_flags
-        working-directory: ${{ steps.detect.outputs.dir }}
-        run: |
-          # Tambahkan macro ke build_flags lewat --project-option (-O)
-          pio run -e full -O 'build_flags=${build_flags} -D SAFE_MODE=0'
+      - name: Build (env full) with SAFE_MODE=0 + BUILD_TAG + BYPASS_SAFETY
+  working-directory: ci_build
+  run: |
+    pio run -e full -t clean
+    pio run -e full -O 'build_flags=${build_flags} -D SAFE_MODE=0 -D BYPASS_SAFETY=1 -D BUILD_TAG=\"${{ github.ref_name }}\"'
 
       - name: List built files (debug)
         working-directory: ${{ steps.detect.outputs.dir }}

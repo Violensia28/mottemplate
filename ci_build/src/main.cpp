@@ -18,6 +18,27 @@ static int readEncoderDelta(){ static int8_t last=0; int a=digitalRead(PIN_ENC_A
 
 void setup(){
   Serial.begin(115200);
+#ifdef SAFE_MODE
+  Serial.printf("[CFG] SAFE_MODE (compile-time) = %d\n", SAFE_MODE);
+#else
+  Serial.println("[CFG] SAFE_MODE (compile-time) = <not defined>");
+#endif
+
+#ifdef BUILD_TAG
+  Serial.printf("[CFG] BUILD_TAG = %s\n", BUILD_TAG);
+#else
+  Serial.println("[CFG] BUILD_TAG = <none>");
+#endif
+#ifndef BYPASS_SAFETY
+  #define BYPASS_SAFETY 1  // set 1 untuk uji buzzer via PC817
+#endif
+
+extern bool g_safe_sim_on; // pastikan variabel ini ada di project kamu
+
+#if BYPASS_SAFETY
+  g_safe_sim_on = false;
+  Serial.println("[SAFETY] BYPASS_SAFETY=1 -> FORCE SAFE_SIM OFF (TEST MODE)");
+#endif
   pinMode(PIN_ACTUATOR, OUTPUT);
   pinMode(PIN_ENC_A, INPUT_PULLUP); pinMode(PIN_ENC_B, INPUT_PULLUP); pinMode(PIN_ENC_BTN, INPUT_PULLUP);
   pinMode(PIN_TRIGGER, INPUT_PULLUP); pinMode(PIN_INTERLOCK, INPUT_PULLUP);
@@ -33,8 +54,8 @@ void setup(){
   engine.begin(PIN_ACTUATOR, [&](PulseStage st){ smart.onStage(st); });
   smart.begin(&display, &engine, &storage, &safety, &ai, &sense, &logger);
 
-  Serial.println(F("[BOOT] motsmartfirmware v0.3-SMART r1 (SAFE_SIM ON)"));
-}
+  Serial.printf("[BOOT] motsmartfirmware v0.3-SMART r1 (SAFE_SIM %s)\n",
+              g_safe_sim_on ? "ON" : "OFF");
 
 void loop(){
   int d = readEncoderDelta(); if (d!=0) smart.onRotate(d);
