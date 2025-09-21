@@ -1,4 +1,4 @@
-name: Release ESP32 CI (DIAG)
+name: Release ESP32 CI (DIAG-Python)
 
 on:
   push:
@@ -55,20 +55,37 @@ jobs:
           echo "== TREE (2 levels) ==" && find . -maxdepth 2 -print
           echo "== platformio.ini ==" && sed -n '1,200p' platformio.ini
 
-      - name: Validate src folder
+      # === VALIDATOR PYTHON (aman) ===
+      - name: Validate src folder (Python)
         working-directory: ${{ steps.pio.outputs.dir }}
         shell: bash
         run: |
-          set -e
-          SRC_DIR="$(grep -E '^[[:space:]]*src_dir[[:space:]]*=' platformio.ini | tail -n1 | sed -E 's/.*=\s*//')"
-          [ -z "$SRC_DIR" ] && SRC_DIR="src"
-          echo "Using src_dir: $SRC_DIR"
-          # cari minimal satu .cpp/.ino (pakai grouping yang benar)
-          if ! find "$SRC_DIR" -maxdepth 3 -type f $$ -name '*.cpp' -o -name '*.ino' $$ -print -quit | grep -q . ; then
-            echo "ERROR: No .cpp/.ino files in $SRC_DIR" >&2
-            exit 1
-          fi
-          echo "== List $SRC_DIR ==" && find "$SRC_DIR" -maxdepth 3 -type f -print | sed -n '1,200p'
+          python - <<'PY'
+          import os, re, sys
+          ini = 'platformio.ini'
+          if not os.path.exists(ini):
+              print('ERROR: platformio.ini not found', file=sys.stderr); sys.exit(1)
+          src_dir = 'src'
+          try:
+              with open(ini, 'r', encoding='utf-8', errors='ignore') as f:
+                  for line in f:
+                      m = re.match(r'^\s*src_dir\s*=\s*(.+)$', line)
+                      if m: src_dir = m.group(1).strip()
+          except Exception as e:
+              print('WARN: failed reading platformio.ini:', e, file=sys.stderr)
+          print('Using src_dir:', src_dir)
+          found = False
+          for root, dirs, files in os.walk(src_dir):
+              for fn in files:
+                  if fn.endswith('.cpp') or fn.endswith('.ino'):
+                      print('Found source:', os.path.join(root, fn))
+                      found = True
+                      break
+              if found: break
+          if not found:
+              print(f"ERROR: No .cpp/.ino files in {src_dir}", file=sys.stderr)
+              sys.exit(1)
+          PY
 
       - name: Snapshot project (for analysis)
         if: always()
@@ -139,7 +156,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Firmware ${{ github.ref_name }} (DIAG)
+          name: Firmware ${{ github.ref_name }} (DIAG-Python)
           files: |
             ${{ steps.pio.outputs.dir }}/${{ steps.pkg.outputs.zipname }}
             ${{ steps.pio.outputs.dir }}/dist/SHA256SUMS.txt
