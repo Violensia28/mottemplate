@@ -55,6 +55,7 @@ jobs:
           echo "== TREE (2 levels) ==" && find . -maxdepth 2 -print
           echo "== platformio.ini ==" && sed -n '1,200p' platformio.ini
 
+      # === VALIDATOR PYTHON (aman, tidak pakai 'find') ===
       - name: Validate src folder (Python)
         working-directory: ${{ steps.pio.outputs.dir }}
         shell: bash
