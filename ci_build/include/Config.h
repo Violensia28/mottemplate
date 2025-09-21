@@ -3,7 +3,7 @@
 
 // ===== Build Flags (overridden by platformio.ini) =====
 #ifndef SAFE_SIM
-#define SAFE_SIM            1
+#define SAFE_SIM            0
 #endif
 #ifndef BUILD_SMART_MODE
 #define BUILD_SMART_MODE    1

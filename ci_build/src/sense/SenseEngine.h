@@ -2,7 +2,7 @@
 #pragma once
 #include <Arduino.h>
 #include "ai/AIAdvisor.h"
-#include "config.h"
+#include "Config.h"
 
 class SenseEngine {
 public:

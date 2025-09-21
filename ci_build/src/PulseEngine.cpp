@@ -1,6 +1,6 @@
 
 #include "PulseEngine.h"
-#include "config.h"
+#include "Config.h"
 
 void PulseEngine::begin(uint8_t pinActuator, StageCb cb) {
   pin = pinActuator; pinMode(pin, OUTPUT); setOutput(false); onStage = cb;

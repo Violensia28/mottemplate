@@ -2,7 +2,7 @@
 #pragma once
 #include <Preferences.h>
 #include "PulseEngine.h"
-#include "config.h"
+#include "Config.h"
 
 struct AppConfig {
   uint8_t version{MODEL_VERSION};

@@ -4,7 +4,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include "config.h"
+#include "Config.h"
 #include "PulseEngine.h"
 #include "StorageManager.h"
 #include "SafetyManager.h"
