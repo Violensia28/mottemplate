@@ -1,0 +1,2 @@
+motsmartfirmware v0.3-SMART r2
+Includes: UI calibration menu, status icons, env:minimal & env:full, docs/storyboard integrated.
