@@ -32,10 +32,7 @@ jobs:
           set -e
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install platformio
-          echo "== Versions =="
-          python --version
-          pio --version
-          pio system info || true
+          echo "== Versions =="; python --version; pio --version; pio system info || true
 
       - name: Locate PlatformIO project
         id: pio
@@ -94,15 +91,13 @@ jobs:
             ${{ steps.pio.outputs.dir }}/__diag__/platformio_dump.txt
           if-no-files-found: ignore
 
-      # === BUILD: catat log lengkap ke build.log ===
       - name: Build firmware (capture log)
         id: build
         working-directory: ${{ steps.pio.outputs.dir }}
         shell: bash
         run: |
           set -e
-          # PERINGATAN: jangan buat file/folder bernama 'envlist' di proyek Anda
-          # karena akan mengacaukan SCons (lihat error sebelumnya).
+          # WARNING: jangan ada file/folder bernama 'envlist' di proyek
           ( set -o pipefail; pio run -e full -v |& tee build.log )
 
       - name: Upload build log (always)
