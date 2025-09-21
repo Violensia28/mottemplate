@@ -3,36 +3,64 @@ name: Build MOTSMART Firmware
 on:
   push:
     tags:
-      - 'v*'   # Trigger saat push tag, misal v0.3.2
-  workflow_dispatch: # Bisa dijalankan manual dari tab Actions
+      - 'v*'           # build saat push tag, contoh: v0.3.3-safeoff
+  workflow_dispatch:    # bisa jalankan manual dari tab Actions
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      - name: Install PlatformIO
-        run: |
-          pip install platformio
+      - name: Cache PlatformIO & pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('**/platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-
 
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      # Build environment "full" di folder ci_build
       - name: Build firmware (env full)
         working-directory: ci_build
         run: |
-          pio run -e full
+          # Paksa SAFE_MODE=0 via macro compile untuk jaga-jaga (selain edit Config.h)
+          pio run -e full -D SAFE_MODE=0
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+      - name: Upload artifacts (full)
+        uses: actions/upload-artifact@v4
         with:
           name: motsmart-full
           path: |
             ci_build/.pio/build/full/bootloader.bin
             ci_build/.pio/build/full/partitions.bin
             ci_build/.pio/build/full/firmware.bin
+            ci_build/.pio/build/full/flasher_args.json
+
+      # (Opsional) Buat merged image satu file — gunakan hanya jika alat flasher Android mendukung
+      - name: Create merged image (optional)
+        if: ${{ always() }}
+        run: |
+          pip install esptool
+          esptool.py --chip esp32 merge_bin -o ci_build/.pio/build/full/merged_full.bin \
+            0x1000  ci_build/.pio/build/full/bootloader.bin \
+            0x8000  ci_build/.pio/build/full/partitions.bin \
+            0x10000 ci_build/.pio/build/full/firmware.bin
+
+      - name: Upload merged image (optional)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: motsmart-full-merged
+          path: ci_build/.pio/build/full/merged_full.bin
