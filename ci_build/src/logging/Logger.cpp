@@ -1,7 +1,10 @@
 #include "Logger.h"
 #ifdef USE_LOGGING
-// Implementasi minimal: bisa diisi header sekali jalan jika diperlukan
-void Logger::ensureHeader() {
-  // contoh: tidak melakukan apa-apa; isi sesuai kebutuhan log header
+void Logger::begin(){ Serial.println("[LOG] start"); }
+void Logger::ensureHeader(){
+  if (!headerPrinted){ Serial.println("[LOG] ------------------------------"); headerPrinted = true; }
 }
+void Logger::info(const String& s){ ensureHeader(); Serial.println("[I] " + s); }
+void Logger::warn(const String& s){ ensureHeader(); Serial.println("[W] " + s); }
+void Logger::err (const String& s){ ensureHeader(); Serial.println("[E] " + s); }
 #endif
