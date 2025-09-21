@@ -1,0 +1,38 @@
+name: Build MOTSMART Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'   # Trigger saat push tag, misal v0.3.2
+  workflow_dispatch: # Bisa dijalankan manual dari tab Actions
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install PlatformIO
+        run: |
+          pip install platformio
+
+      - name: Build firmware (env full)
+        working-directory: ci_build
+        run: |
+          pio run -e full
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: motsmart-full
+          path: |
+            ci_build/.pio/build/full/bootloader.bin
+            ci_build/.pio/build/full/partitions.bin
+            ci_build/.pio/build/full/firmware.bin
