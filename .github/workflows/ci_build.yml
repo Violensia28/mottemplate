@@ -1,20 +1,43 @@
-name: Build MOTSMART Firmware (ci_build/full)
+name: Build MOTSMART Firmware (auto-detect PIO dir, full env)
 
 on:
   push:
     tags:
-      - 'v*'                 # build saat push tag: v0.3.x
-  workflow_dispatch:         # bisa jalan manual dari tab Actions
+      - 'v*'                 # build saat push tag, contoh: v0.3.9-safeoff
+  workflow_dispatch:         # bisa dijalankan manual dari tab Actions
 
 permissions:
-  contents: write            # perlu untuk Release (opsional)
+  contents: write            # diperlukan jika membuat Release
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Show ref & commit
+        run: |
+          echo "GITHUB_REF = $GITHUB_REF"
+          echo "GITHUB_SHA = $GITHUB_SHA"
+
+      - name: Detect PlatformIO project dir
+        id: detect
+        run: |
+          set -e
+          if [ -f "ci_build/platformio.ini" ]; then
+            echo "dir=ci_build" >> "$GITHUB_OUTPUT"
+          elif [ -f "platformio.ini" ]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          else
+            echo "ERROR: No platformio.ini found in repo root or ci_build/"
+            exit 1
+          fi
+          echo "Detected PIO dir: $(cat $GITHUB_OUTPUT)"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -34,72 +57,23 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
-      - name: Clean build folder (env full)
-        working-directory: ci_build
+      - name: Clean build (env full)
+        working-directory: ${{ steps.detect.outputs.dir }}
         run: pio run -e full -t clean
 
       - name: Build (env full) with SAFE_MODE=0 via build_flags
-        working-directory: ci_build
+        working-directory: ${{ steps.detect.outputs.dir }}
         run: |
-          # Tambahkan macro ke build_flags dari workflow (BUKAN -D ke pio run)
+          # Tambahkan macro ke build_flags lewat --project-option (-O)
           pio run -e full -O 'build_flags=${build_flags} -D SAFE_MODE=0'
 
       - name: List built files (debug)
-        working-directory: ci_build
+        working-directory: ${{ steps.detect.outputs.dir }}
         run: |
           echo ">>> Tree of .pio/build/full"
           ls -alR .pio/build/full || true
-          echo ">>> flasher_args.json (jika ada)"
-          if [ -f .pio/build/full/flasher_args.json ]; then
-            cat .pio/build/full/flasher_args.json
-          else
-            echo "flasher_args.json not found."
-          fi
-
-      - name: Upload artifacts (whatever exists)
-        uses: actions/upload-artifact@v4
-        with:
-          name: motsmart-full
-          path: |
-            ci_build/.pio/build/full/*.bin
-            ci_build/.pio/build/full/flasher_args.json
-          if-no-files-found: warn
-
-      # OPTIONAL: merge jadi satu file hanya jika semua bagian ada
-      - name: Create merged image (optional)
-        run: |
-          BOOT=$(ls ci_build/.pio/build/full/bootloader*.bin 2>/dev/null | head -n1 || true)
-          PART=$(ls ci_build/.pio/build/full/partitions*.bin 2>/dev/null | head -n1 || true)
-          APP="ci_build/.pio/build/full/firmware.bin"
-          if [ -n "$BOOT" ] && [ -n "$PART" ] && [ -f "$APP" ]; then
-            echo "Merging:"
-            echo "  BOOT: $BOOT"
-            echo "  PART: $PART"
-            echo "  APP : $APP"
-            pip install esptool
-            # pakai perintah baru: merge-bin (bukan merge_bin)
-            esptool.py --chip esp32 merge-bin -o ci_build/.pio/build/full/merged_full.bin \
-              0x1000 "$BOOT" 0x8000 "$PART" 0x10000 "$APP"
-          else
-            echo "Skip merge: one or more files missing."
-          fi
-
-      - name: Upload merged image (if created)
-        if: ${{ hashFiles('ci_build/.pio/build/full/merged_full.bin') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: motsmart-full-merged
-          path: ci_build/.pio/build/full/merged_full.bin
-          if-no-files-found: warn
-
-      # OPTIONAL: attach ke GitHub Release ketika push tag
-      - name: Collect release assets
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          mkdir -p ci_build/.pio/build/full/release
-          for f in bootloader*.bin partitions*.bin firmware.bin merged_full.bin flasher_args.json; do
-            [ -f "ci_build/.pio/build/full/$f" ] && cp "ci_build/.pio/build/full/$f" "ci_build/.pio/build/full/release/"
-          done
+          echo ">>> platformio.ini (peek)"
+          head -n 200 platformio.ini || true          done
           ls -al ci_build/.pio/build/full/release || true
 
       - name: Create GitHub Release & upload assets
