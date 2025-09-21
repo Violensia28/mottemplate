@@ -26,12 +26,35 @@ jobs:
         with:
           python-version: '3.11'
 
+      # ===== CACHE pip =====
+      - name: Cache pip (~/.cache/pip)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          # Kunci memakai OS + versi Python + perubahan pada platformio.ini (proxy dependency)
+          key: ${{ runner.os }}-pip-3.11-${{ hashFiles('ci_build/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.11-
+            ${{ runner.os }}-pip-
+
       - name: Install PlatformIO
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install platformio
 
-      # Fokus ke ci_build saja
+      # ===== CACHE PlatformIO =====
+      - name: Cache PlatformIO (~/.platformio & ci_build/.pio)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ci_build/.pio
+          # Kunci berdasarkan OS + perubahan di platformio.ini (env, board, libs)
+          key: ${{ runner.os }}-pio-${{ hashFiles('ci_build/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      # Fokus build hanya di ci_build (tanpa auto-locate)
       - name: Build (capture log)
         working-directory: ci_build
         shell: bash
