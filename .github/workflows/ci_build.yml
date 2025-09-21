@@ -1,20 +1,21 @@
-name: Build MOTSMART Full
+name: Build MOTSMART Firmware (ci_build/full)
 
 on:
   push:
     tags:
-      - 'v*'                 # Build saat push tag (mis. v0.3.5-safeoff)
-  workflow_dispatch:         # Bisa dijalankan manual dari tab Actions
+      - 'v*'                 # build saat push tag, mis. v0.3.5-safeoff
+  workflow_dispatch:         # bisa dijalankan manual dari tab Actions
+
+permissions:
+  contents: write            # dibutuhkan jika bikin Release
 
 jobs:
-  build-full:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -31,50 +32,42 @@ jobs:
           restore-keys: |
             pio-${{ runner.os }}-
 
-      - name: Install PlatformIO & esptool
-        run: |
-          python -m pip install --upgrade pip
-          pip install platformio esptool
+      - name: Install PlatformIO
+        run: pip install platformio
 
-      - name: Show platformio.ini (debug)
-        run: |
-          if [ -f ci_build/platformio.ini ]; then
-            echo "Found ci_build/platformio.ini:"
-            sed -n '1,200p' ci_build/platformio.ini
-          else
-            echo "ERROR: ci_build/platformio.ini not found!" && exit 2
-          fi
+      - name: Clean build folder (env full)
+        working-directory: ci_build
+        run: pio run -e full -t clean
 
-      - name: Prepare environment variables
-        run: |
-          # Siapkan REF_NAME yang stabil untuk dipakai di shell
-          echo "REF_NAME=${GITHUB_REF_NAME:-${GITHUB_REF##*/}}" >> $GITHUB_ENV
-
-      - name: Clean & Build env=full (SAFE_MODE forced OFF)
+      - name: Build (env full) with SAFE_MODE=0 via build_flags
         working-directory: ci_build
         run: |
-          # Bersihkan build lama
-          pio run -e full -t clean
-          # Tambahkan macro SAFE_MODE=0 ke build_flags via project-option (bukan -D langsung)
-          pio run -e full -O 'build_flags=${build_flags} -D SAFE_MODE=0 -D BUILD_TAG=\"'${REF_NAME}'\"'
-          # Tampilkan lokasi output
-          echo ">>> Built files under .pio/build/full:"
-          ls -al .pio/build/full || true
-          # Tampilkan flasher_args.json jika ada
+          # JANGAN pakai `pio run -D ...` (itu salah). Gunakan -O/--project-option:
+          # build_flags=${build_flags} -D SAFE_MODE=0 ==> menambahkan macro ke build_flags yang sudah ada
+          pio run -e full -O 'build_flags=${build_flags} -D SAFE_MODE=0'
+
+      - name: List built files (debug)
+        working-directory: ci_build
+        run: |
+          echo ">>> Tree of .pio/build/full"
+          ls -alR .pio/build/full || true
+          echo ">>> flasher_args.json (jika ada)"
           if [ -f .pio/build/full/flasher_args.json ]; then
-            echo ">>> flasher_args.json:" && cat .pio/build/full/flasher_args.json
+            cat .pio/build/full/flasher_args.json
+          else
+            echo "flasher_args.json not found."
           fi
 
       - name: Upload artifacts (whatever exists)
         uses: actions/upload-artifact@v4
         with:
-          name: motsmart-full-${{ env.REF_NAME }}
+          name: motsmart-full
           path: |
             ci_build/.pio/build/full/*.bin
             ci_build/.pio/build/full/flasher_args.json
           if-no-files-found: warn
 
-      # OPSIONAL: Buat merged image (hanya jika semua bagian tersedia)
+      # OPTIONAL: merge ke satu berkas hanya jika semua bagian ada
       - name: Create merged image (optional)
         run: |
           BOOT=$(ls ci_build/.pio/build/full/bootloader*.bin 2>/dev/null | head -n1 || true)
@@ -85,21 +78,39 @@ jobs:
             echo "  BOOT: $BOOT"
             echo "  PART: $PART"
             echo "  APP : $APP"
+            pip install esptool
+            # gunakan perintah baru: merge-bin (bukan merge_bin)
             esptool.py --chip esp32 merge-bin -o ci_build/.pio/build/full/merged_full.bin \
               0x1000 "$BOOT" 0x8000 "$PART" 0x10000 "$APP"
           else
-            echo "Skip merge: one or more files missing (this is OK)."
+            echo "Skip merge: one or more files missing."
           fi
 
       - name: Upload merged image (if created)
         if: ${{ hashFiles('ci_build/.pio/build/full/merged_full.bin') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: motsmart-full-merged-${{ env.REF_NAME }}
+          name: motsmart-full-merged
           path: ci_build/.pio/build/full/merged_full.bin
           if-no-files-found: warn
 
-      # OPSIONAL: Rilis otomatis saat push tag
+      # OPTIONAL: buat GitHub Release saat push tag dan lampirkan file yang ada
+      - name: Collect release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p ci_build/.pio/build/full/release
+          for f in bootloader*.bin partitions*.bin firmware.bin merged_full.bin flasher_args.json; do
+            [ -f "ci_build/.pio/build/full/$f" ] && cp "ci_build/.pio/build/full/$f" "ci_build/.pio/build/full/release/"
+          done
+          ls -al ci_build/.pio/build/full/release || true
+
+      - name: Create GitHub Release & upload assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ci_build/.pio/build/full/release/*
+          draft: false
+          prerelease: false      # OPSIONAL: Rilis otomatis saat push tag
       - name: Create GitHub Release (attach binaries)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
