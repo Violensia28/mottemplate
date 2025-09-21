@@ -3,12 +3,13 @@ name: Build MOTSMART Firmware
 on:
   push:
     tags:
-      - 'v*'           # build saat push tag, contoh: v0.3.3-safeoff
-  workflow_dispatch:    # bisa jalankan manual dari tab Actions
+      - 'v*'                 # Build saat push tag (contoh: v0.3.4-safeoff)
+  workflow_dispatch:         # Bisa dijalankan manual dari tab Actions
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -31,36 +32,56 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
-      # Build environment "full" di folder ci_build
-      - name: Build firmware (env full)
+      - name: Build firmware (env full, SAFE_MODE forced OFF)
         working-directory: ci_build
         run: |
-          # Paksa SAFE_MODE=0 via macro compile untuk jaga-jaga (selain edit Config.h)
+          pio run -e full -t clean
           pio run -e full -D SAFE_MODE=0
 
-      - name: Upload artifacts (full)
+      - name: List built files (debug)
+        working-directory: ci_build
+        run: |
+          echo ">>> Tree of .pio/build/full"
+          ls -alR .pio/build/full || true
+          echo ">>> Try to show flasher_args.json if present"
+          if [ -f .pio/build/full/flasher_args.json ]; then
+            cat .pio/build/full/flasher_args.json
+          else
+            echo "flasher_args.json not found."
+          fi
+
+      - name: Upload artifacts (whatever exists)
         uses: actions/upload-artifact@v4
         with:
           name: motsmart-full
           path: |
-            ci_build/.pio/build/full/bootloader.bin
-            ci_build/.pio/build/full/partitions.bin
-            ci_build/.pio/build/full/firmware.bin
+            ci_build/.pio/build/full/*.bin
             ci_build/.pio/build/full/flasher_args.json
+          if-no-files-found: warn
 
-      # (Opsional) Buat merged image satu file — gunakan hanya jika alat flasher Android mendukung
+      # OPTIONAL: create merged image only if all parts exist
       - name: Create merged image (optional)
-        if: ${{ always() }}
         run: |
-          pip install esptool
-          esptool.py --chip esp32 merge_bin -o ci_build/.pio/build/full/merged_full.bin \
-            0x1000  ci_build/.pio/build/full/bootloader.bin \
-            0x8000  ci_build/.pio/build/full/partitions.bin \
-            0x10000 ci_build/.pio/build/full/firmware.bin
+          BOOT=$(ls ci_build/.pio/build/full/bootloader*.bin 2>/dev/null | head -n1 || true)
+          PART=$(ls ci_build/.pio/build/full/partitions*.bin 2>/dev/null | head -n1 || true)
+          APP="ci_build/.pio/build/full/firmware.bin"
+          if [ -n "$BOOT" ] && [ -n "$PART" ] && [ -f "$APP" ]; then
+            echo "Merging using:"
+            echo "  BOOT: $BOOT"
+            echo "  PART: $PART"
+            echo "  APP : $APP"
+            pip install esptool
+            # NOTE: use 'merge-bin' (new) not 'merge_bin' (deprecated)
+            esptool.py --chip esp32 merge-bin -o ci_build/.pio/build/full/merged_full.bin \
+              0x1000 "$BOOT" 0x8000 "$PART" 0x10000 "$APP"
+          else
+            echo "Skip merge: one or more files missing."
+          fi
 
-      - name: Upload merged image (optional)
-        if: ${{ always() }}
+      - name: Upload merged image (if created)
+        if: ${{ hashFiles('ci_build/.pio/build/full/merged_full.bin') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: motsmart-full-merged
           path: ci_build/.pio/build/full/merged_full.bin
+          if-no-files-found: warn
