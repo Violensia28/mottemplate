@@ -19,6 +19,43 @@ static int readEncoderDelta(){ static int8_t last=0; int a=digitalRead(PIN_ENC_A
 void setup(){
   Serial.begin(115200);
 #ifdef SAFE_MODE
+  Serial.printf("[CFG] SAFE_MODE (compile-time) = %d
+", SAFE_MODE);
+#else
+  Serial.println("[CFG] SAFE_MODE (compile-time) = <not defined>");
+#endif
+
+#ifdef BUILD_TAG
+  Serial.printf("[CFG] BUILD_TAG = %s
+", BUILD_TAG);
+#else
+  Serial.println("[CFG] BUILD_TAG = <none>");
+#endif
+
+#ifndef BYPASS_SAFETY
+  #define BYPASS_SAFETY 1  // 1 untuk uji buzzer via PC817; ubah 0 untuk produksi
+#endif
+extern bool g_safe_sim_on;  // pastikan variabel ini ada di project
+#if BYPASS_SAFETY
+  g_safe_sim_on = false;
+  Serial.println("[SAFETY] BYPASS_SAFETY=1 -> FORCE SAFE_SIM OFF (TEST MODE)");
+#endif
+// ===== Ubah banner boot agar pakai runtime flag =====
+Serial.printf("[BOOT] motsmartfirmware v0.3-SMART r1 (SAFE_SIM %s)
+", g_safe_sim_on ? "ON" : "OFF");
+// =======================================================================
+#ifdef SAFE_MODE
+  Serial.printf("[CFG] SAFE_MODE (compile-time) = %d\n", SAFE_MODE);
+#else
+  Serial.println("[CFG] SAFE_MODE (compile-time) = <not defined>");
+#endif
+
+#ifdef BUILD_TAG
+  Serial.printf("[CFG] BUILD_TAG = %s\n", BUILD_TAG);
+#else
+  Serial.println("[CFG] BUILD_TAG = <none>");
+#endif
+#ifdef SAFE_MODE
   Serial.printf("[CFG] SAFE_MODE (compile-time) = %d\n", SAFE_MODE);
 #else
   Serial.println("[CFG] SAFE_MODE (compile-time) = <not defined>");
@@ -30,7 +67,7 @@ void setup(){
   Serial.println("[CFG] BUILD_TAG = <none>");
 #endif
 #ifndef BYPASS_SAFETY
-  #define BYPASS_SAFETY 1  // set 1 untuk uji buzzer via PC817
+  #define BYPASS_SAFETY 0  // set 1 untuk uji buzzer via PC817
 #endif
 
 extern bool g_safe_sim_on; // pastikan variabel ini ada di project kamu
